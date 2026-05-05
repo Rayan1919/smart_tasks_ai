@@ -118,12 +118,14 @@ class _ChatScreenState extends State<ChatScreen> {
         .collection('users').doc(uid).collection('tasks');
 
     final batch = FirebaseFirestore.instance.batch();
-    for (final t in items) {
+    for (var i = 0; i < items.length; i++) {
+      final t = items[i];
       final doc = col.doc();
       batch.set(doc, {
         'title': t,
         'done': false,
         'createdAt': FieldValue.serverTimestamp(),
+        'aiOrder': i + 1,
       });
     }
     await batch.commit();

@@ -104,7 +104,7 @@ class _TaskSetupScreenState extends State<TaskSetupScreen> {
     });
 
     if (mounted) {
-      _toast(S.t(context, 'save_task'));
+      _toast(S.t(context, 'save_success'));
       Navigator.of(context).pop();
     }
   }

@@ -75,4 +75,116 @@ class ApiService {
     }
     return 'Got it. Tell me your goal and I will suggest a short checklist.';
   }
+
+  Future<List<Map<String, dynamic>>> suggestTaskOrder(
+    List<Map<String, dynamic>> tasks,
+  ) async {
+    if (tasks.isEmpty) return [];
+
+    // وضع mock إذا ما فيه مفتاح
+    if (_useMock || _apiKey.isEmpty) {
+      int score(Map<String, dynamic> t) {
+        final priority = (t['priority'] ?? 'normal').toString();
+        final dueRaw = t['due']?.toString();
+        final due = DateTime.tryParse(dueRaw ?? '');
+
+        final pScore = priority == 'high'
+            ? 0
+            : priority == 'normal'
+                ? 1
+                : 2;
+
+        final dueScore = due == null
+            ? 50
+            : due.difference(DateTime.now()).inDays.abs();
+
+        return pScore * 100 + dueScore;
+      }
+
+      final ranked = List<Map<String, dynamic>>.from(tasks)
+        ..sort((a, b) => score(a).compareTo(score(b)));
+
+      return [
+        for (var i = 0; i < ranked.length; i++)
+          {
+            'id': ranked[i]['id'],
+            'rank': i + 1,
+            'reason': 'Mock heuristic',
+          }
+      ];
+    }
+
+    final prompt = '''
+Return JSON only in this shape:
+{"items":[{"id":"TASK_ID","rank":1,"reason":"..."}]}
+
+Rank these tasks from most important to least important for the user to finish first.
+Use due date, priority, urgency, and note if available.
+
+Tasks:
+${jsonEncode(tasks.map((t) => {
+        'id': t['id'],
+        'title': t['title'],
+        'note': t['note'],
+        'priority': t['priority'],
+        'due': t['due'],
+        'tag': t['tag'],
+      }).toList())}
+''';
+
+    final resp = await http.post(
+      Uri.parse(_endpoint),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_apiKey',
+      },
+      body: jsonEncode({
+        'model': _model,
+        'messages': [
+          {
+            'role': 'system',
+            'content':
+                'You are Smart Tasks AI. Return only valid JSON. No markdown.',
+          },
+          {'role': 'user', 'content': prompt},
+        ],
+        'temperature': 0.2,
+      }),
+    );
+
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw Exception('OpenAI error ${resp.statusCode}: ${resp.body}');
+    }
+
+    final data = jsonDecode(resp.body);
+    final content = data['choices']?[0]?['message']?['content'];
+
+    if (content is! String) return [];
+
+    final jsonText = _extractJson(content);
+    final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
+    final items = (decoded['items'] as List? ?? []);
+
+    return items.map((e) {
+      final m = e as Map<String, dynamic>;
+      return {
+        'id': m['id'].toString(),
+        'rank': int.tryParse(m['rank'].toString()) ?? 9999,
+        'reason': (m['reason'] ?? '').toString(),
+      };
+    }).toList();
+  }
+}
+
+String _extractJson(String text) {
+  final cleaned = text
+      .replaceAll(RegExp(r'```json', multiLine: true), '')
+      .replaceAll('```', '')
+      .trim();
+
+  final start = cleaned.indexOf('{');
+  final end = cleaned.lastIndexOf('}');
+  if (start == -1 || end == -1 || end <= start) return cleaned;
+
+  return cleaned.substring(start, end + 1);
 }

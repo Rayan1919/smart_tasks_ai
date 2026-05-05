@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../i18n/strings.dart';
+import '../services/api_service.dart';
 
 class TasksScreen extends StatefulWidget {
   const TasksScreen({super.key});
@@ -17,6 +18,25 @@ class _TasksScreenState extends State<TasksScreen> {
 
   CollectionReference<Map<String, dynamic>>? _col;
   Stream<QuerySnapshot<Map<String, dynamic>>>? _stream;
+  bool _useAiOrdering = false;
+
+  int _priorityScore(String p) {
+    switch (p) {
+      case 'high':
+        return 0;
+      case 'normal':
+        return 1;
+      case 'low':
+        return 2;
+      default:
+        return 3;
+    }
+  }
+
+  DateTime? _toDate(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    return null;
+  }
 
   @override
   void initState() {
@@ -54,6 +74,70 @@ class _TasksScreenState extends State<TasksScreen> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(S.t(context, 'clear_completed'))));
     }
+  }
+
+  Future<void> _suggestAiOrder() async {
+    if (_col == null) return;
+
+    final snap = await _col!.get();
+    final tasks = snap.docs.map((d) {
+      final data = d.data();
+      return {
+        'id': d.id,
+        'title': data['title'],
+        'note': data['note'],
+        'priority': data['priority'],
+        'due': data['due'],
+        'tag': data['tag'],
+      };
+    }).toList();
+
+    if (tasks.isEmpty) return;
+
+    final ranked = await ApiService.instance.suggestTaskOrder(tasks);
+    if (!mounted || ranked.isEmpty) return;
+
+    final preview = ranked
+        .take(5)
+        .map((e) => '${e['rank']}. ${tasks.firstWhere((t) => t['id'] == e['id'])['title']}')
+        .join('\n');
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(S.t(context, 'confirm_ai_order')),
+        content: Text(preview),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    final batch = FirebaseFirestore.instance.batch();
+    for (final item in ranked) {
+      batch.update(_col!.doc(item['id'] as String), {
+        'aiOrder': item['rank'],
+        'aiReason': item['reason'],
+      });
+    }
+
+    await batch.commit();
+
+    if (!mounted) return;
+    setState(() => _useAiOrdering = true);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(S.t(context, 'ai_order_applied'))),
+    );
   }
 
   String _fmtDate(DateTime d) =>
@@ -185,6 +269,11 @@ class _TasksScreenState extends State<TasksScreen> {
             icon: const Icon(Icons.settings),
             onPressed: () => Navigator.of(context).pushNamed('/settings'),
           ),
+          IconButton(
+            tooltip: S.t(context, 'suggest_order'),
+            icon: const Icon(Icons.auto_awesome),
+            onPressed: _suggestAiOrder,
+          ),
           // رابط الشات
           IconButton(
             tooltip: S.t(context, 'ai_chat'),
@@ -263,6 +352,31 @@ class _TasksScreenState extends State<TasksScreen> {
 
                   return okStatus && okSearch;
                 }).toList();
+
+                filtered.sort((a, b) {
+                  final ad = a.data();
+                  final bd = b.data();
+
+                  if (_useAiOrdering) {
+                    final aiA = (ad['aiOrder'] as num?)?.toInt() ?? 9999;
+                    final aiB = (bd['aiOrder'] as num?)?.toInt() ?? 9999;
+                    if (aiA != aiB) return aiA.compareTo(aiB);
+                  }
+
+                  final pA = _priorityScore((ad['priority'] ?? 'normal').toString());
+                  final pB = _priorityScore((bd['priority'] ?? 'normal').toString());
+                  if (pA != pB) return pA.compareTo(pB);
+
+                  final dA = _toDate(ad['due']);
+                  final dB = _toDate(bd['due']);
+                  if (dA != null && dB != null && dA != dB) {
+                    return dA.compareTo(dB);
+                  }
+
+                  final cA = _toDate(ad['createdAt']) ?? DateTime.fromMillisecondsSinceEpoch(0);
+                  final cB = _toDate(bd['createdAt']) ?? DateTime.fromMillisecondsSinceEpoch(0);
+                  return cB.compareTo(cA);
+                });
 
                 final total = allDocs.length;
                 final active = allDocs.where((d) {
