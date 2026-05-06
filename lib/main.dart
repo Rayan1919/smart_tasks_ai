@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/settings_screen.dart';
+import 'global_scaffold_messenger.dart';
 
 
 import 'app_settings.dart';
@@ -40,6 +41,7 @@ class MyApp extends StatelessWidget {
           valueListenable: AppSettings.locale,
           builder: (_, locale, __) {
             return MaterialApp(
+              scaffoldMessengerKey: scaffoldMessengerKey,
               title: 'Smart Tasks AI',
               debugShowCheckedModeBanner: false,
               theme: _theme(Brightness.light),

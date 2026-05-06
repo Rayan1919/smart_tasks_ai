@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../i18n/strings.dart';
 import 'chat_screen.dart';
+import '../global_scaffold_messenger.dart';
 
 class TaskSetupScreen extends StatefulWidget {
   const TaskSetupScreen({super.key});
@@ -34,7 +35,9 @@ class _TaskSetupScreenState extends State<TaskSetupScreen> {
   }
 
   void _toast(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    final sm = ScaffoldMessenger.of(context);
+    sm.clearSnackBars();
+    sm.showSnackBar(SnackBar(content: Text(msg)));
   }
 
   Future<void> _pickDate() async {
@@ -91,23 +94,46 @@ class _TaskSetupScreenState extends State<TaskSetupScreen> {
     }
 
     final col = FirebaseFirestore.instance
-        .collection('users').doc(uid).collection('tasks');
+      .collection('users').doc(uid).collection('tasks');
+    // Capture localized strings before awaiting to avoid using BuildContext across async gaps.
+    final successMsg = S.t(context, 'save_success');
+    final failedMsg = S.t(context, 'save_failed');
 
-    await col.add({
-      'title': _title.text.trim(),
-      'note': _note.text.trim().isEmpty ? null : _note.text.trim(),
-      'due': _due != null ? Timestamp.fromDate(_due!) : null,
-      'priority': _prioStr(),
-      'tag': _tag.text.trim().isEmpty ? null : _tag.text.trim(),
-      'done': false,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+    void _showGlobalSnack(String msg) {
+      final gm = scaffoldMessengerKey.currentState;
+      final snack = SnackBar(
+        content: Text(msg),
+        duration: const Duration(seconds: 2),
+      );
+      if (gm != null) {
+        gm.hideCurrentSnackBar();
+        gm.showSnackBar(snack);
+      } else {
+        final sm = ScaffoldMessenger.of(context);
+        sm.clearSnackBars();
+        sm.showSnackBar(snack);
+      }
+    }
 
-    if (mounted) {
-      _toast(S.t(context, 'save_success'));
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) Navigator.of(context).pop();
+    try {
+      await col.add({
+        'title': _title.text.trim(),
+        'note': _note.text.trim().isEmpty ? null : _note.text.trim(),
+        'due': _due != null ? Timestamp.fromDate(_due!) : null,
+        'priority': _prioStr(),
+        'tag': _tag.text.trim().isEmpty ? null : _tag.text.trim(),
+        'done': false,
+        'createdAt': FieldValue.serverTimestamp(),
       });
+
+      _showGlobalSnack(successMsg);
+
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      _showGlobalSnack(failedMsg);
     }
   }
 
